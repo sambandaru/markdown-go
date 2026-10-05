@@ -3402,6 +3402,11 @@ const indexHTML = `<!DOCTYPE html>
 
         if (searchQuery) {
           scrollToMatch(renderedEl, searchQuery);
+        } else if (!pushState && window.location.hash) {
+          let id;
+          try { id = decodeURIComponent(window.location.hash.substring(1)); } catch (e) { id = window.location.hash.substring(1); }
+          const el = document.getElementById(id);
+          if (el) el.scrollIntoView();
         }
 
         if (pushState) {
@@ -3996,6 +4001,17 @@ const indexHTML = `<!DOCTYPE html>
         return '<img src="' + href + '" alt="' + (text || '') + '"' + titleAttr + ' />';
       };
 
+      // Point relative file links at the viewer (/?file=...) instead of raw server paths
+      const origLink = renderer.link.bind(renderer);
+      renderer.link = function(token) {
+        const target = resolveLocalLink(token.href);
+        if (!target) return origLink(token);
+        const href = isViewablePath(target.path)
+          ? viewerUrlFor(target.path, target.hash)
+          : mediaUrlFor(target.path) + target.hash;
+        return origLink({ ...token, href: href });
+      };
+
       // Generate heading IDs for TOC anchor links
       const origHeading = renderer.heading.bind(renderer);
       renderer.heading = function({ text, depth }) {
@@ -4010,6 +4026,52 @@ const indexHTML = `<!DOCTYPE html>
         return '<div class="mermaid-block"><div class="mermaid">' + decodeHTML(code) + '</div></div>';
       });
       return html;
+    }
+
+    // resolveLocalLink resolves a relative/root-relative href against the
+    // active file's directory. Returns { path, hash } or null for external,
+    // in-page anchor, or out-of-root links.
+    function resolveLocalLink(href) {
+      if (!href) return null;
+      href = href.trim();
+      if (href === '' || href.startsWith('#') || href.startsWith('//')) return null;
+      if (/^[a-z][a-z0-9+.\-]*:/i.test(href)) return null; // http:, mailto:, data:, etc.
+      let hash = '';
+      const hashIdx = href.indexOf('#');
+      if (hashIdx >= 0) { hash = href.substring(hashIdx); href = href.substring(0, hashIdx); }
+      const queryIdx = href.indexOf('?');
+      if (queryIdx >= 0) href = href.substring(0, queryIdx);
+      if (href === '') return null;
+      if (href.startsWith('/api/')) return null;
+      let decoded;
+      try { decoded = decodeURIComponent(href); } catch (e) { decoded = href; }
+      const parts = [];
+      if (!decoded.startsWith('/') && activeFile && activeFile.includes('/')) {
+        parts.push(...activeFile.substring(0, activeFile.lastIndexOf('/')).split('/').filter(seg => seg !== '' && seg !== '.'));
+      }
+      for (const seg of decoded.split('/')) {
+        if (seg === '' || seg === '.') continue;
+        if (seg === '..') {
+          if (!parts.length) return null;
+          parts.pop();
+          continue;
+        }
+        parts.push(seg);
+      }
+      if (!parts.length) return null;
+      return { path: parts.join('/'), hash: hash };
+    }
+
+    function viewerUrlFor(filePath, hash) {
+      const params = new URLSearchParams();
+      params.set('file', filePath);
+      if (baseFolderPath) params.set('baseFolderPath', baseFolderPath);
+      params.set('sidebar', sidebarHidden ? '0' : '1');
+      return '/?' + params.toString() + (hash || '');
+    }
+
+    function isViewablePath(p) {
+      return isMarkdownPath(p) || isPdfPath(p) || isHtmlPath(p) || isImagePath(p) || isLogPath(p);
     }
 
     async function renderMermaid() {
