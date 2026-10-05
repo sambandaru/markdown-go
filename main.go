@@ -4032,7 +4032,7 @@ const indexHTML = `<!DOCTYPE html>
       try { decoded = decodeURIComponent(href); } catch (e) { decoded = href; }
       const parts = [];
       if (!decoded.startsWith('/') && activeFile && activeFile.includes('/')) {
-        parts.push(...activeFile.substring(0, activeFile.lastIndexOf('/')).split('/'));
+        parts.push(...activeFile.substring(0, activeFile.lastIndexOf('/')).split('/').filter(seg => seg !== '' && seg !== '.'));
       }
       for (const seg of decoded.split('/')) {
         if (seg === '' || seg === '.') continue;
@@ -4071,7 +4071,7 @@ const indexHTML = `<!DOCTYPE html>
           a.dataset.file = target.path;
           if (target.hash) a.dataset.hash = target.hash;
         } else {
-          a.setAttribute('href', mediaUrlFor(target.path));
+          a.setAttribute('href', mediaUrlFor(target.path) + target.hash);
         }
       });
     }
@@ -4081,8 +4081,13 @@ const indexHTML = `<!DOCTYPE html>
       const a = e.target.closest('a[data-file]');
       if (!a || !renderedEl.contains(a) || (a.target && a.target !== '_self')) return;
       e.preventDefault();
-      await openFile(a.dataset.file, true);
+      const file = a.dataset.file;
       const hash = a.dataset.hash;
+      await openFile(file, true);
+      if (activeFile !== file) return;
+      const url = new URL(window.location.href);
+      url.hash = hash || '';
+      window.history.replaceState(window.history.state, '', url);
       if (hash) {
         let id;
         try { id = decodeURIComponent(hash.substring(1)); } catch (err) { id = hash.substring(1); }
