@@ -3371,6 +3371,7 @@ const indexHTML = `<!DOCTYPE html>
         fileNameEl.textContent = activeFile;
         rawCodeEl.textContent = rawContent;
         renderedEl.innerHTML = renderMarkdown(rawContent);
+        rewriteLocalLinks(renderedEl);
         const firstHeader = renderedEl.querySelector('h1, h2, h3, h4, h5, h6');
         document.title = firstHeader ? firstHeader.textContent.trim() + ' - Markdown Viewer' : 'Markdown Viewer';
         await renderMermaid();
@@ -4012,6 +4013,84 @@ const indexHTML = `<!DOCTYPE html>
       return html;
     }
 
+    // resolveLocalLink resolves a relative/root-relative href against the
+    // active file's directory. Returns { path, hash } or null for external,
+    // in-page anchor, or out-of-root links.
+    function resolveLocalLink(href) {
+      if (!href) return null;
+      href = href.trim();
+      if (href === '' || href.startsWith('#') || href.startsWith('//')) return null;
+      if (/^[a-z][a-z0-9+.\-]*:/i.test(href)) return null; // http:, mailto:, data:, etc.
+      let hash = '';
+      const hashIdx = href.indexOf('#');
+      if (hashIdx >= 0) { hash = href.substring(hashIdx); href = href.substring(0, hashIdx); }
+      const queryIdx = href.indexOf('?');
+      if (queryIdx >= 0) href = href.substring(0, queryIdx);
+      if (href === '') return null;
+      if (href.startsWith('/api/')) return null;
+      let decoded;
+      try { decoded = decodeURIComponent(href); } catch (e) { decoded = href; }
+      const parts = [];
+      if (!decoded.startsWith('/') && activeFile && activeFile.includes('/')) {
+        parts.push(...activeFile.substring(0, activeFile.lastIndexOf('/')).split('/'));
+      }
+      for (const seg of decoded.split('/')) {
+        if (seg === '' || seg === '.') continue;
+        if (seg === '..') {
+          if (!parts.length) return null;
+          parts.pop();
+          continue;
+        }
+        parts.push(seg);
+      }
+      if (!parts.length) return null;
+      return { path: parts.join('/'), hash: hash };
+    }
+
+    function viewerUrlFor(filePath, hash) {
+      const params = new URLSearchParams();
+      params.set('file', filePath);
+      if (baseFolderPath) params.set('baseFolderPath', baseFolderPath);
+      params.set('sidebar', sidebarHidden ? '0' : '1');
+      return '/?' + params.toString() + (hash || '');
+    }
+
+    function isViewablePath(p) {
+      return isMarkdownPath(p) || isPdfPath(p) || isHtmlPath(p) || isImagePath(p) || isLogPath(p);
+    }
+
+    // rewriteLocalLinks points relative file links in rendered markdown at
+    // the viewer (/?file=...) instead of raw server paths.
+    function rewriteLocalLinks(container) {
+      container.querySelectorAll('a[href]').forEach(a => {
+        if (a.classList.contains('anchor')) return;
+        const target = resolveLocalLink(a.getAttribute('href'));
+        if (!target) return;
+        if (isViewablePath(target.path)) {
+          a.setAttribute('href', viewerUrlFor(target.path, target.hash));
+          a.dataset.file = target.path;
+          if (target.hash) a.dataset.hash = target.hash;
+        } else {
+          a.setAttribute('href', mediaUrlFor(target.path));
+        }
+      });
+    }
+
+    renderedEl.addEventListener('click', async (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const a = e.target.closest('a[data-file]');
+      if (!a || !renderedEl.contains(a) || (a.target && a.target !== '_self')) return;
+      e.preventDefault();
+      await openFile(a.dataset.file, true);
+      const hash = a.dataset.hash;
+      if (hash) {
+        let id;
+        try { id = decodeURIComponent(hash.substring(1)); } catch (err) { id = hash.substring(1); }
+        const el = document.getElementById(id);
+        if (el) el.scrollIntoView();
+      }
+    });
+
     async function renderMermaid() {
       if (!window.mermaid) return;
       const nodes = document.querySelectorAll('.mermaid');
@@ -4345,6 +4424,7 @@ const indexHTML = `<!DOCTYPE html>
         // Re-render
         rawCodeEl.textContent = rawContent;
         renderedEl.innerHTML = renderMarkdown(rawContent);
+        rewriteLocalLinks(renderedEl);
         await renderMermaid();
         attachCheckboxHandlers();
       } catch (err) {
