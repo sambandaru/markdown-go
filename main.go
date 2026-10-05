@@ -3371,7 +3371,6 @@ const indexHTML = `<!DOCTYPE html>
         fileNameEl.textContent = activeFile;
         rawCodeEl.textContent = rawContent;
         renderedEl.innerHTML = renderMarkdown(rawContent);
-        rewriteLocalLinks(renderedEl);
         const firstHeader = renderedEl.querySelector('h1, h2, h3, h4, h5, h6');
         document.title = firstHeader ? firstHeader.textContent.trim() + ' - Markdown Viewer' : 'Markdown Viewer';
         await renderMermaid();
@@ -3403,6 +3402,11 @@ const indexHTML = `<!DOCTYPE html>
 
         if (searchQuery) {
           scrollToMatch(renderedEl, searchQuery);
+        } else if (!pushState && window.location.hash) {
+          let id;
+          try { id = decodeURIComponent(window.location.hash.substring(1)); } catch (e) { id = window.location.hash.substring(1); }
+          const el = document.getElementById(id);
+          if (el) el.scrollIntoView();
         }
 
         if (pushState) {
@@ -3997,6 +4001,17 @@ const indexHTML = `<!DOCTYPE html>
         return '<img src="' + href + '" alt="' + (text || '') + '"' + titleAttr + ' />';
       };
 
+      // Point relative file links at the viewer (/?file=...) instead of raw server paths
+      const origLink = renderer.link.bind(renderer);
+      renderer.link = function(token) {
+        const target = resolveLocalLink(token.href);
+        if (!target) return origLink(token);
+        const href = isViewablePath(target.path)
+          ? viewerUrlFor(target.path, target.hash)
+          : mediaUrlFor(target.path) + target.hash;
+        return origLink({ ...token, href: href });
+      };
+
       // Generate heading IDs for TOC anchor links
       const origHeading = renderer.heading.bind(renderer);
       renderer.heading = function({ text, depth }) {
@@ -4058,43 +4073,6 @@ const indexHTML = `<!DOCTYPE html>
     function isViewablePath(p) {
       return isMarkdownPath(p) || isPdfPath(p) || isHtmlPath(p) || isImagePath(p) || isLogPath(p);
     }
-
-    // rewriteLocalLinks points relative file links in rendered markdown at
-    // the viewer (/?file=...) instead of raw server paths.
-    function rewriteLocalLinks(container) {
-      container.querySelectorAll('a[href]').forEach(a => {
-        if (a.classList.contains('anchor')) return;
-        const target = resolveLocalLink(a.getAttribute('href'));
-        if (!target) return;
-        if (isViewablePath(target.path)) {
-          a.setAttribute('href', viewerUrlFor(target.path, target.hash));
-          a.dataset.file = target.path;
-          if (target.hash) a.dataset.hash = target.hash;
-        } else {
-          a.setAttribute('href', mediaUrlFor(target.path) + target.hash);
-        }
-      });
-    }
-
-    renderedEl.addEventListener('click', async (e) => {
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      const a = e.target.closest('a[data-file]');
-      if (!a || !renderedEl.contains(a) || (a.target && a.target !== '_self')) return;
-      e.preventDefault();
-      const file = a.dataset.file;
-      const hash = a.dataset.hash;
-      await openFile(file, true);
-      if (activeFile !== file) return;
-      const url = new URL(window.location.href);
-      url.hash = hash || '';
-      window.history.replaceState(window.history.state, '', url);
-      if (hash) {
-        let id;
-        try { id = decodeURIComponent(hash.substring(1)); } catch (err) { id = hash.substring(1); }
-        const el = document.getElementById(id);
-        if (el) el.scrollIntoView();
-      }
-    });
 
     async function renderMermaid() {
       if (!window.mermaid) return;
@@ -4429,7 +4407,6 @@ const indexHTML = `<!DOCTYPE html>
         // Re-render
         rawCodeEl.textContent = rawContent;
         renderedEl.innerHTML = renderMarkdown(rawContent);
-        rewriteLocalLinks(renderedEl);
         await renderMermaid();
         attachCheckboxHandlers();
       } catch (err) {
